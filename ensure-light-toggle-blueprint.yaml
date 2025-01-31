@@ -1,39 +1,49 @@
 blueprint:
-  name: Service Retry with State Validation
-  description: Retry service calls until entity reaches desired state
+  name: Retry Switch/Light with Custom State Checks
+  description: Turn entity on/off with retries, customizable state validation, and failure action.
   domain: automation
   input:
-    target_entity:
-      name: Target Entity
-      description: Entity to control and monitor
+    entity_id:
+      name: Entity
+      description: Light or switch entity to control
       selector:
-        entity: {}
-    service_to_call:
-      name: Service
-      description: Service to execute on the entity
+        entity:
+          domain: ["light", "switch"]
+    check_state_value:
+      name: Target State
+      description: Desired state (on/off)
       selector:
-        service:
-          integration: 
-            - "{{ (target_entity.split('.')[0]) | default('homeassistant') }}"
-    expected_state:
-      name: Expected State
-      description: State to validate after service call
-      selector:
-        state:
-          entity_id: !input target_entity
+        select:
+          options: ["on", "off"]
     check_period:
       name: Retry Delay
-      description: Time between attempts
+      description: Time between retry attempts (e.g., "00:00:10" for 10 seconds)
       selector:
         duration:
     number_retries:
-      name: Retry Attempts
-      description: Number of retries after initial attempt
+      name: Retry Count
+      description: Number of retry attempts after initial try
       selector:
         number:
           min: 0
-          max: 10
           mode: box
+    state_check_type:
+      name: State Check Method
+      description: How to verify if the state was successfully set
+      selector:
+        select:
+          options:
+            - state_match
+            - entity_available
+            - template
+          custom_value: true
+    custom_state_check_template:
+      name: Custom State Template
+      description: >
+        Template to evaluate for state check (when using template method).
+        Use 'entity_id' variable. Example: "{{ is_state(entity_id, 'on') }}"
+      selector:
+        template:
     action_on_failure:
       name: Failure Action
       description: Action to execute after all retries fail
@@ -42,52 +52,68 @@ blueprint:
 
 variables:
   remaining_retries: !input number_retries
+  state_check: >
+    {% set method = input.state_check_type %}
+    {% if method == 'state_match' %}
+      {{ is_state(input.entity_id, input.check_state_value) }}
+    {% elif method == 'entity_available' %}
+      {{ not is_state(input.entity_id, 'unavailable') and not is_state(input.entity_id, 'unknown') }}
+    {% elif method == 'template' %}
+      {{ template(input.custom_state_check_template) }}
+    {% endif %}
 
 trigger:
   - platform: event
-    event_type: retry_service_validation
+    event_type: retry_entity_state
 
 action:
   - choose:
-      - conditions: "{{ trigger is not defined or trigger.event.data.target_entity != target_entity }}"
+      - conditions: "{{ trigger is not defined or trigger.event.data.entity_id != entity_id }}"
         sequence:
-          # Initial service call
-          - service: !input service_to_call
+          - service: >
+              {% if check_state_value == 'on' %}
+                homeassistant.turn_on
+              {% else %}
+                homeassistant.turn_off
+              {% endif %}
             target:
-              entity_id: !input target_entity
+              entity_id: !input entity_id
           - delay: !input check_period
           - condition: template
-            value_template: "{{ is_state(input.target_entity, input.expected_state) }}"
+            value_template: "{{ state_check }}"
           - if:
               - "{{ not condition }}"
             then:
-              - event: retry_service_validation
+              - event: retry_entity_state
                 event_data:
-                  target_entity: !input target_entity
+                  entity_id: !input entity_id
                   retries: "{{ remaining_retries }}"
 
     default:
-      # Retry sequence
       - variables:
           remaining_retries: "{{ trigger.event.data.retries | int - 1 }}"
       - if:
           - "{{ remaining_retries >= 0 }}"
         then:
-          - service: !input service_to_call
+          - service: >
+              {% if check_state_value == 'on' %}
+                homeassistant.turn_on
+              {% else %}
+                homeassistant.turn_off
+              {% endif %}
             target:
-              entity_id: !input target_entity
+              entity_id: !input entity_id
           - delay: !input check_period
           - condition: template
-            value_template: "{{ is_state(input.target_entity, input.expected_state) }}"
+            value_template: "{{ state_check }}"
           - if:
               - "{{ not condition }}"
             then:
-              - event: retry_service_validation
+              - event: retry_entity_state
                 event_data:
-                  target_entity: !input target_entity
+                  entity_id: !input entity_id
                   retries: "{{ remaining_retries }}"
         else:
-          # Failure action
           - action: !input action_on_failure
 
 mode: restart
