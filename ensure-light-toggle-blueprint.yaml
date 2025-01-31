@@ -1,44 +1,67 @@
 blueprint:
-  name: Retry Switch/Light with Notification
-  description: Attempt to turn a switch/light on/off, retry if state is not achieved, and trigger an action on failure.
+  name: Retry Switch/Light with Custom State Checks
+  description: Turn entity on/off with retries, customizable state validation, and failure action.
   domain: automation
   input:
     entity_id:
       name: Entity
-      description: Light or switch entity to control.
+      description: Light or switch entity to control
       selector:
         entity:
-          domain: 
-            - light
-            - switch
+          domain: ["light", "switch"]
     check_state_value:
       name: Target State
-      description: Desired state (on/off).
+      description: Desired state (on/off)
       selector:
         select:
-          options:
-            - "on"
-            - "off"
+          options: ["on", "off"]
     check_period:
-      name: Check Delay
-      description: Time to wait before checking state (e.g., "00:00:10" for 10 seconds).
+      name: Retry Delay
+      description: Time between retry attempts (e.g., "00:00:10" for 10 seconds)
       selector:
         duration:
     number_retries:
       name: Retry Count
-      description: Number of retries after initial attempt.
+      description: Number of retry attempts after initial try
       selector:
         number:
           min: 0
           mode: box
+    state_check_type:
+      name: State Check Method
+      description: How to verify if the state was successfully set
+      selector:
+        select:
+          options:
+            - state_match
+            - entity_available
+            - template
+          custom_value: true
+    custom_state_check_template:
+      name: Custom State Template
+      description: >
+        Template to evaluate for state check (when using template method).
+        Use 'entity_id' variable. Example: "{{ is_state(entity_id, 'on') }}"
+      selector:
+        template:
+      optional: true
     action_on_failure:
       name: Failure Action
-      description: Action to execute after all retries fail (e.g., notify).
+      description: Action to execute after all retries fail
       selector:
         action:
 
 variables:
   remaining_retries: !input number_retries
+  state_check: >
+    {% set method = input.state_check_type %}
+    {% if method == 'state_match' %}
+      {{ is_state(input.entity_id, input.check_state_value) }}
+    {% elif method == 'entity_available' %}
+      {{ not is_state(input.entity_id, 'unavailable') and not is_state(input.entity_id, 'unknown') }}
+    {% elif method == 'template' %}
+      {{ template(input.custom_state_check_template) }}
+    {% endif %}
 
 trigger:
   - platform: event
@@ -46,10 +69,8 @@ trigger:
 
 action:
   - choose:
-      # First attempt or retry
       - conditions: "{{ trigger is not defined or trigger.event.data.entity_id != entity_id }}"
         sequence:
-          # Initial attempt to set the state
           - service: >
               {% if check_state_value == 'on' %}
                 homeassistant.turn_on
@@ -60,7 +81,7 @@ action:
               entity_id: !input entity_id
           - delay: !input check_period
           - condition: template
-            value_template: "{{ is_state(input.entity_id, input.check_state_value) }}"
+            value_template: "{{ state_check }}"
           - if:
               - "{{ not condition }}"
             then:
@@ -70,7 +91,6 @@ action:
                   retries: "{{ remaining_retries }}"
 
     default:
-      # Retry logic
       - variables:
           remaining_retries: "{{ trigger.event.data.retries | int - 1 }}"
       - if:
@@ -86,7 +106,7 @@ action:
               entity_id: !input entity_id
           - delay: !input check_period
           - condition: template
-            value_template: "{{ is_state(input.entity_id, input.check_state_value) }}"
+            value_template: "{{ state_check }}"
           - if:
               - "{{ not condition }}"
             then:
@@ -95,7 +115,6 @@ action:
                   entity_id: !input entity_id
                   retries: "{{ remaining_retries }}"
         else:
-          # All retries exhausted; trigger failure action
           - action: !input action_on_failure
 
 mode: restart
