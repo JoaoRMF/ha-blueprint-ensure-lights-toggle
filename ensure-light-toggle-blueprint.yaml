@@ -1,9 +1,10 @@
 blueprint:
-  name: "Retry Light/ Switch State"
+  name: "Retry Light/Switch Script"
   description: >
-    Turn on/off a light or switch and retry if the state does not match. 
-    Calls a fallback service on failure.
-  domain: automation
+    Turns a light or switch on or off, checks for the correct state, retries if needed,
+    and calls a fallback service upon failure if it never reaches the desired state.
+  domain: script
+
   input:
     target_entity:
       name: Target Entity
@@ -13,57 +14,53 @@ blueprint:
           domain:
             - light
             - switch
+
     desired_state:
       name: Desired State
-      description: The desired final state
+      description: The final state (on/off) to reach
       selector:
         select:
           options:
             - on
             - off
+
     check_period:
-      name: Check Period
-      description: Time in seconds to wait before checking the state again
+      name: Check Period (seconds)
+      description: How many seconds to wait before checking the state again
       default: 5
       selector:
         number:
           min: 1
           max: 60
-          step: 1
-          mode: box
           unit_of_measurement: s
+          mode: box
+
     number_retries:
       name: Number of Retries
-      description: How many times to attempt setting the state
+      description: How many times to attempt setting the desired state
       default: 3
       selector:
         number:
           min: 1
           max: 10
-          step: 1
           mode: box
+
     on_failure_service:
       name: Failure Service
-      description: Service to call if all retries fail
-      default: notify.mobile_app_my_phone
+      description: Which service to call upon failure
+      default: notify.notify
       selector:
         text:
+
     on_failure_service_data:
       name: Failure Service Data
-      description: Data passed to the Failure Service
+      description: Data passed into the fallback service
       default:
-        message: "Unable to change to the requested state after multiple retries."
+        message: "Unable to reach desired state."
       selector:
         object:
 
-mode: queued
-
-trigger:
-  # Example trigger — adjust as needed or remove to call manually
-  - platform: state
-    entity_id: !input target_entity
-
-action:
+sequence:
   - repeat:
       count: !input number_retries
       sequence:
@@ -78,7 +75,7 @@ action:
                 - service: light.turn_off
                   data:
                     entity_id: !input.target_entity
-        - delay: !input.check_period
+        - delay: !input check_period
         - choose:
             - conditions:
                 - condition: state
@@ -86,12 +83,14 @@ action:
                   state: !input.desired_state
               sequence:
                 - break
+
   - condition: template
     value_template: >
       {{ states(!input.target_entity) == !input.desired_state }}
+
   - choose:
       - conditions: >
-          {{ not ( states(!input.target_entity) == !input.desired_state ) }}
+          {{ not (states(!input.target_entity) == !input.desired_state) }}
         sequence:
           - service: !input.on_failure_service
             data: !input.on_failure_service_data
