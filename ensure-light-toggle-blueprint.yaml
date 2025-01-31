@@ -23,7 +23,7 @@ blueprint:
       name: Check Delay
       description: Time to wait before checking state (e.g., "00:00:10" for 10 seconds).
       selector:
-        time:
+        duration:
     number_retries:
       name: Retry Count
       description: Number of retries after initial attempt.
