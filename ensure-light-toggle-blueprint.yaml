@@ -43,8 +43,7 @@ blueprint:
         Template to evaluate for state check (when using template method).
         Use 'entity_id' variable. Example: "{{ is_state(entity_id, 'on') }}"
       selector:
-        template:
-      default: {}
+        template: "{{}}"
     action_on_failure:
       name: Failure Action
       description: Action to execute after all retries fail
