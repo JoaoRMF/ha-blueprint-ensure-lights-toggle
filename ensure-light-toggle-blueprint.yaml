@@ -1,0 +1,101 @@
+blueprint:
+  name: Retry Switch/Light with Notification
+  description: Attempt to turn a switch/light on/off, retry if state is not achieved, and trigger an action on failure.
+  domain: automation
+  input:
+    entity_id:
+      name: Entity
+      description: Light or switch entity to control.
+      selector:
+        entity:
+          domain: 
+            - light
+            - switch
+    check_state_value:
+      name: Target State
+      description: Desired state (on/off).
+      selector:
+        select:
+          options:
+            - "on"
+            - "off"
+    check_period:
+      name: Check Delay
+      description: Time to wait before checking state (e.g., "00:00:10" for 10 seconds).
+      selector:
+        time:
+    number_retries:
+      name: Retry Count
+      description: Number of retries after initial attempt.
+      selector:
+        number:
+          min: 0
+          mode: box
+    action_on_failure:
+      name: Failure Action
+      description: Action to execute after all retries fail (e.g., notify).
+      selector:
+        action:
+
+variables:
+  remaining_retries: !input number_retries
+
+trigger:
+  - platform: event
+    event_type: retry_entity_state
+
+action:
+  - choose:
+      # First attempt or retry
+      - conditions: "{{ trigger is not defined or trigger.event.data.entity_id != entity_id }}"
+        sequence:
+          # Initial attempt to set the state
+          - service: >
+              {% if check_state_value == 'on' %}
+                homeassistant.turn_on
+              {% else %}
+                homeassistant.turn_off
+              {% endif %}
+            target:
+              entity_id: !input entity_id
+          - delay: !input check_period
+          - condition: template
+            value_template: "{{ is_state(input.entity_id, input.check_state_value) }}"
+          - if:
+              - "{{ not condition }}"
+            then:
+              - event: retry_entity_state
+                event_data:
+                  entity_id: !input entity_id
+                  retries: "{{ remaining_retries }}"
+
+    default:
+      # Retry logic
+      - variables:
+          remaining_retries: "{{ trigger.event.data.retries | int - 1 }}"
+      - if:
+          - "{{ remaining_retries >= 0 }}"
+        then:
+          - service: >
+              {% if check_state_value == 'on' %}
+                homeassistant.turn_on
+              {% else %}
+                homeassistant.turn_off
+              {% endif %}
+            target:
+              entity_id: !input entity_id
+          - delay: !input check_period
+          - condition: template
+            value_template: "{{ is_state(input.entity_id, input.check_state_value) }}"
+          - if:
+              - "{{ not condition }}"
+            then:
+              - event: retry_entity_state
+                event_data:
+                  entity_id: !input entity_id
+                  retries: "{{ remaining_retries }}"
+        else:
+          # All retries exhausted; trigger failure action
+          - action: !input action_on_failure
+
+mode: restart
