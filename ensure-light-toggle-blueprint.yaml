@@ -65,32 +65,36 @@ sequence:
       count: !input number_retries
       sequence:
         - choose:
-            - conditions: "{{ !input.desired_state == 'on' }}"
+            - conditions:
+                - condition: template
+                  value_template: "{{ !input.desired_state == 'on' }}"
               sequence:
                 - service: light.turn_on
-                  data:
+                  target:
                     entity_id: !input target_entity
-            - conditions: "{{ !input.desired_state == 'off' }}"
+            - conditions:
+                - condition: template
+                  value_template: "{{ !input.desired_state == 'off' }}"
               sequence:
                 - service: light.turn_off
-                  data:
-                    entity_id: !input.target_entity
-        - delay: !input check_period
+                  target:
+                    entity_id: !input target_entity
+
+        - delay:
+            seconds: !input check_period
+
         - choose:
             - conditions:
                 - condition: state
-                  entity_id: !input.target_entity
-                  state: !input.desired_state
+                  entity_id: !input target_entity
+                  state: !input desired_state
               sequence:
                 - break
 
-  - condition: template
-    value_template: >
-      {{ states(!input.target_entity) == !input.desired_state }}
-
   - choose:
-      - conditions: >
-          {{ not (states(!input.target_entity) == !input.desired_state) }}
+      - conditions:
+          - condition: template
+            value_template: "{{ states(!input.target_entity) != !input.desired_state }}"
         sequence:
-          - service: !input.on_failure_service
-            data: !input.on_failure_service_data
+          - service: !input on_failure_service
+            data: !input on_failure_service_data
